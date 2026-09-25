@@ -1,0 +1,37 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data and vectorstores
+data/transcripts/*
+!data/transcripts/.gitkeep
+data/vectorstores/*
+!data/vectorstores/.gitkeep
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS Files
+Thumbs.db
+.DS_Store
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / Editor
+.vscode/
+.idea/
