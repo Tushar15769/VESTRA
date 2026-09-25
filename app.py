@@ -108,27 +108,47 @@ settings = get_settings()
 
 
 def render_sources_section(sources: list, retrieved_context: list, is_supported: bool = True):
-    """Render grounded sources or graceful fallback for unsupported questions."""
-    st.markdown("**📍 Sources**")
+    """Render grounded evidence passages or graceful fallback for unsupported questions."""
+    st.markdown("**📍 Evidence from the video**")
     if not is_supported or not sources:
-        st.markdown("*No directly relevant source was found in the transcript.*")
+        st.markdown("*No directly relevant evidence was found in the video.*")
         if retrieved_context:
-            with st.expander("▶ View retrieved context", expanded=False):
+            with st.expander("▶ View retrieval candidates", expanded=False):
+                st.caption(
+                    "These are transcript passages considered during retrieval across the entire video. "
+                    "None contained sufficient evidence to support this question."
+                )
                 for s in retrieved_context:
                     st.markdown(
                         f"**{s['start_time_formatted']} – {s['end_time_formatted']}** "
-                        f"([▶️ Open]({s['timestamp_url']}))"
+                        f"([▶️ Open in YouTube]({s['timestamp_url']}))"
                     )
                     st.info(s["text"])
     else:
         for s in sources[:4]:
-            st.markdown(f"• [{s['start_time_formatted']}]({s['timestamp_url']}) — {s['label']}")
+            passage = s.get("passage") or s.get("label") or s["text"][:180]
+            st.markdown(f"• [**{s['start_time_formatted']} ↗**]({s['timestamp_url']})")
+            st.markdown(f'> *"{passage}"*')
+
+        with st.expander("▶ View transcript evidence", expanded=False):
+            st.caption("Full transcript passages supporting the answer above:")
+            for s in sources[:4]:
+                st.markdown(
+                    f"**{s['start_time_formatted']} – {s['end_time_formatted']}** "
+                    f"([▶️ Open in YouTube]({s['timestamp_url']}))"
+                )
+                st.info(s["text"])
+
         if retrieved_context:
-            with st.expander("▶ View retrieved context", expanded=False):
+            with st.expander("▶ View retrieval details", expanded=False):
+                st.caption(
+                    "These are transcript passages considered during retrieval across the entire video. "
+                    "Only the final evidence shown above was provided to the LLM as supporting context."
+                )
                 for s in retrieved_context:
                     st.markdown(
                         f"**{s['start_time_formatted']} – {s['end_time_formatted']}** "
-                        f"([▶️ Open]({s['timestamp_url']}))"
+                        f"([▶️ Open in YouTube]({s['timestamp_url']}))"
                     )
                     st.info(s["text"])
 
@@ -186,33 +206,39 @@ with st.expander("🧠 How VESTRA works", expanded=False):
 ```text
 YouTube Video
       ↓
-  Transcript
+   Transcript
       ↓
-Smart Chunking
+ Smart Chunking
       ↓
 Semantic Embeddings
       ↓
-FAISS Retrieval
+FAISS + Lexical Search
       ↓
-  GPT-OSS 20B
+ Hybrid Reranking
       ↓
-Grounded Answer
+Relevant Evidence
+      ↓
+ GPT-OSS 20B
+      ↓
+ Grounded Answer
 ```
-VESTRA strictly indexes and queries the video's transcript without relying on outside hallucinations.
+VESTRA grounds every answer in the video's transcript and refuses questions when sufficient evidence isn't found.
 """
     )
-    st.markdown("---")
-    st.markdown("##### Technical Architecture")
-    t_col1, t_col2, t_col3 = st.columns(3)
+
+# Technical Architecture Expander
+with st.expander("⚙️ Technical Architecture", expanded=False):
+    t_col1, t_col2 = st.columns(2)
     with t_col1:
         st.markdown("**Embedding Model**")
-        st.caption("`all-MiniLM-L6-v2`")
-    with t_col2:
+        st.caption("`all-MiniLM-L6-v2` (384-dimensional dense vectors)")
         st.markdown("**Vector Search**")
-        st.caption("`FAISS · IndexFlatIP`")
-    with t_col3:
+        st.caption("`FAISS · IndexFlatIP` (Cosine similarity)")
+    with t_col2:
+        st.markdown("**Retrieval**")
+        st.caption("`Semantic + Lexical Hybrid Retrieval`")
         st.markdown("**LLM**")
-        st.caption("`Groq · GPT-OSS 20B`")
+        st.caption("`Groq · GPT-OSS 20B` (`openai/gpt-oss-20b`)")
 
 # Video URL Input
 url_default = getattr(st.session_state, "url_input_value", "")
@@ -225,7 +251,7 @@ with col_input:
         label_visibility="collapsed",
     )
 with col_btn:
-    process_btn = st.button("🚀 Process", type="primary", use_container_width=True)
+    process_btn = st.button("Process", type="primary", use_container_width=True)
 
 
 def process_video_pipeline(video_url: str):
@@ -310,7 +336,11 @@ def process_video_pipeline(video_url: str):
 
         # Initialize QA Chain
         llm_service = get_llm_service(settings)
-        retriever = TranscriptRetriever(vectorstore=vectorstore, top_k=settings.top_k)
+        retriever = TranscriptRetriever(
+            vectorstore=vectorstore,
+            top_k=settings.top_k,
+            candidates_k=settings.retrieval_candidates,
+        )
         st.session_state.qa_chain = RAGQAChain(retriever=retriever, llm_service=llm_service)
         st.session_state.current_video_id = video_id
         st.session_state.chat_history = []
@@ -439,4 +469,19 @@ if st.session_state.video_metadata and st.session_state.current_video_id:
                 })
 
 elif not st.session_state.current_video_id:
-    st.info("👆 Enter a YouTube video URL above and click **'Process'** to start chatting with VESTRA!")
+    st.markdown(
+        """
+        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 1.5rem 1.8rem; margin-top: 1rem;">
+            <h4 style="margin-top: 0; color: #1E293B; font-weight: 700;">Get started with VESTRA</h4>
+            <ol style="margin-bottom: 0.8rem; padding-left: 1.2rem; color: #475569; line-height: 1.8;">
+                <li>Paste any public YouTube video URL into the field above and click <strong>Process</strong>.</li>
+                <li>Ask questions about the video’s content and receive strictly grounded natural answers.</li>
+                <li>Verify answers with clickable transcript evidence linked directly to video timestamps.</li>
+            </ol>
+            <p style="margin-bottom: 0; color: #64748B; font-size: 0.9rem;">
+                💡 <em>Tip: You can also choose one of the sample videos from the left sidebar to try immediately.</em>
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )

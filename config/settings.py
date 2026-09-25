@@ -69,11 +69,17 @@ class Settings(BaseSettings):
         ge=0,
         description="Character overlap between consecutive chunks."
     )
+    retrieval_candidates: int = Field(
+        default=10,
+        ge=4,
+        le=50,
+        description="Number of candidate chunks to search across the transcript before relevance selection."
+    )
     top_k: int = Field(
         default=4,
         ge=1,
         le=20,
-        description="Number of top relevant chunks to retrieve from FAISS."
+        description="Maximum number of final supporting source chunks to pass to the LLM and display."
     )
 
     model_config = SettingsConfigDict(

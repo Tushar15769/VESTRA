@@ -1,5 +1,4 @@
-"""End-to-end RAG QA Chain coordinating retrieval, grounded generation, and video summaries."""
-
+import re
 from typing import Any, Dict, List, Optional
 import numpy as np
 from ingestion.chunker import TranscriptChunk
@@ -11,14 +10,52 @@ from utils.logging_utils import get_logger
 logger = get_logger("qa_chain")
 
 
-def _generate_source_label(text: str, max_words: int = 7) -> str:
-    """Generate a concise topic label from chunk text for clean UI source chips."""
+def format_evidence_passage(text: str, max_chars: int = 240) -> str:
+    """Format a coherent, standalone transcript passage avoiding awkward mid-sentence truncation."""
     cleaned = text.strip()
-    first_sentence = cleaned.split(".")[0].strip()
-    words = first_sentence.split()
-    if len(words) <= max_words:
-        return " ".join(words)
-    return " ".join(words[:max_words]) + "..."
+    if not cleaned:
+        return ""
+
+    raw_sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    selected: List[str] = []
+    total_len = 0
+
+    for sent in raw_sentences:
+        s = sent.strip()
+        if not s:
+            continue
+        # Capitalize leading character for readable prose
+        if s[0].islower():
+            s = s[0].upper() + s[1:]
+
+        if total_len + len(s) + 1 <= max_chars:
+            selected.append(s)
+            total_len += len(s) + 1
+            if total_len >= 90:
+                break
+        else:
+            if not selected:
+                words = s.split()
+                truncated_words = []
+                w_len = 0
+                for w in words:
+                    if w_len + len(w) + 1 <= max_chars - 3:
+                        truncated_words.append(w)
+                        w_len += len(w) + 1
+                    else:
+                        break
+                return " ".join(truncated_words) + "..."
+            break
+
+    passage = " ".join(selected)
+    if passage and passage[-1] not in ".!?":
+        passage += "."
+    return passage
+
+
+def _generate_source_label(text: str, max_words: int = 25) -> str:
+    """Generate a coherent standalone evidence passage from transcript text."""
+    return format_evidence_passage(text, max_chars=220)
 
 
 def is_unsupported_answer(answer: str) -> bool:
@@ -97,7 +134,7 @@ class RAGQAChain:
         """
         logger.info(f"Processing question: '{question}'")
 
-        # 1. Retrieve relevant chunks
+        # 1. Retrieve relevant evidence chunks from full transcript search
         results = self.retriever.retrieve(question)
 
         if not results:
@@ -110,7 +147,7 @@ class RAGQAChain:
 
         chunks: List[TranscriptChunk] = [r[0] for r in results]
 
-        # 2. Construct grounded prompt
+        # 2. Construct grounded prompt with ONLY the top final evidence chunks
         prompt = build_user_prompt(question=question, chunks=chunks, chat_history=chat_history)
 
         # 3. Call LLM Service
@@ -127,7 +164,9 @@ class RAGQAChain:
         # 4. Check if the question was determined to be unsupported
         is_supported = not is_unsupported_answer(answer)
 
-        # 5. Format retrieved context chunks
+        # 5. Format evaluated candidate chunks for transparency
+        raw_candidates = getattr(self.retriever, "last_candidates", None)
+        candidate_results = raw_candidates if isinstance(raw_candidates, list) else results
         retrieved_context = [
             {
                 "chunk_id": chunk.chunk_id,
@@ -140,11 +179,32 @@ class RAGQAChain:
                 "timestamp_url": chunk.timestamp_url,
                 "score": round(score, 4),
             }
+            for chunk, score in candidate_results
+        ]
+
+        # 6. Format final evidence sources (strictly capped at top_k)
+        final_sources = [
+            {
+                "chunk_id": chunk.chunk_id,
+                "label": _generate_source_label(chunk.text),
+                "passage": format_evidence_passage(chunk.text),
+                "text": chunk.text,
+                "start_timestamp": chunk.start_timestamp,
+                "end_timestamp": chunk.end_timestamp,
+                "start_time_formatted": chunk.start_time_formatted,
+                "end_time_formatted": chunk.end_time_formatted,
+                "timestamp_url": chunk.timestamp_url,
+                "score": round(score, 4),
+            }
             for chunk, score in results
         ]
 
         # Never present chunks as sources if the answer is unsupported
-        sources = retrieved_context if is_supported else []
+        sources = final_sources if is_supported else []
+
+        # Reset transient candidate state
+        if hasattr(self.retriever, "last_candidates"):
+            self.retriever.last_candidates = None
 
         return {
             "answer": answer,
@@ -191,6 +251,7 @@ class RAGQAChain:
             {
                 "chunk_id": chunk.chunk_id,
                 "label": _generate_source_label(chunk.text),
+                "passage": format_evidence_passage(chunk.text),
                 "text": chunk.text,
                 "start_timestamp": chunk.start_timestamp,
                 "end_timestamp": chunk.end_timestamp,
