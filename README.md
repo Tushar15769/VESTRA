@@ -1,5 +1,7 @@
 # 🎬 VESTRA — Ask beyond the video.
 
+<img width="1896" height="812" alt="Screenshot 2026-10-20 103311" src="https://github.com/user-attachments/assets/3ff54f7e-dc5c-492f-9fa0-b52283a437c7" />
+
 > **AI-powered YouTube RAG**
 
 Ask questions about long-form YouTube videos and get transcript-grounded answers with clickable timestamps that let you verify the supporting evidence directly in the video.
